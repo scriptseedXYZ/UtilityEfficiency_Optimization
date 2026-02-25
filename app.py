@@ -104,6 +104,36 @@ def generate_synthetic_data(n_rows=10000):
     
     return df
 
+@st.cache_data
+def train_model_cached():
+    df = generate_synthetic_data(10000)
+    df_model = df.drop(columns=['sec_mmbtu_per_t_eth']).copy()
+    
+    categorical_cols = ['mode', 'power_onsite_tech']
+    df_encoded = pd.get_dummies(df_model, columns=categorical_cols, drop_first=True)
+    
+    X = df_encoded
+    y = df['sec_mmbtu_per_t_eth'].values
+    
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    
+    model = GradientBoostingRegressor(
+        n_estimators=150,
+        max_depth=5,
+        learning_rate=0.1,
+        random_state=42
+    )
+    model.fit(X_train, y_train)
+    
+    y_pred_train = model.predict(X_train)
+    y_pred_test = model.predict(X_test)
+    
+    train_r2 = r2_score(y_train, y_pred_train)
+    test_r2 = r2_score(y_test, y_pred_test)
+    test_mae = mean_absolute_error(y_test, y_pred_test)
+    
+    return model, X_train, X_test, y_train, y_test, train_r2, test_r2, test_mae, df_encoded, df
+
 def train_model(df):
     df_model = df.drop(columns=['sec_mmbtu_per_t_eth']).copy()
     
@@ -282,28 +312,8 @@ with tab2:
 with tab3:
     st.subheader("Model Training: Gradient Boosting Regressor")
     
-    if not st.session_state.get('model_trained', False):
-        model, X_train, X_test, y_train, y_test, train_r2, test_r2, test_mae, df_encoded = train_model(df)
-        st.session_state['model'] = model
-        st.session_state['X_train'] = X_train
-        st.session_state['X_test'] = X_test
-        st.session_state['y_train'] = y_train
-        st.session_state['y_test'] = y_test
-        st.session_state['train_r2'] = train_r2
-        st.session_state['test_r2'] = test_r2
-        st.session_state['test_mae'] = test_mae
-        st.session_state['df_encoded'] = df_encoded
-        st.session_state['model_trained'] = True
-    else:
-        model = st.session_state['model']
-        X_train = st.session_state['X_train']
-        X_test = st.session_state['X_test']
-        y_train = st.session_state['y_train']
-        y_test = st.session_state['y_test']
-        train_r2 = st.session_state['train_r2']
-        test_r2 = st.session_state['test_r2']
-        test_mae = st.session_state['test_mae']
-        df_encoded = st.session_state['df_encoded']
+    with st.spinner("Loading cached model..."):
+        model, X_train, X_test, y_train, y_test, train_r2, test_r2, test_mae, df_encoded, df = train_model_cached()
     
     st.write(f"**Training samples:** {len(X_train)}")
     st.write(f"**Test samples:** {len(X_test)}")
@@ -335,49 +345,49 @@ with tab3:
     ax2.set_title('Actual vs Predicted')
     st.pyplot(fig2)
 
-with tab3:
+with tab4:
+    if not st.session_state.get('model_loaded', False):
+        with st.spinner("Loading model..."):
+            model, X_train, X_test, y_train, y_test, train_r2, test_r2, test_mae, df_encoded, df = train_model_cached()
+            st.session_state['model'] = model
+            st.session_state['df_encoded'] = df_encoded
+            st.session_state['model_loaded'] = True
+    
+    model = st.session_state['model']
+    df_encoded = st.session_state['df_encoded']
+    
     st.subheader("Enter Features for Prediction")
     
-    col1, col2 = st.columns(2)
+    with st.form("prediction_form"):
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            plant_load_pct = st.number_input("Plant Load (%)", min_value=60.0, max_value=105.0, value=85.0, step=1.0)
+            ethylene_rate_tph = st.number_input("Ethylene Rate (tph)", min_value=50.0, max_value=350.0, value=150.0, step=5.0)
+            avg_cot_c = st.number_input("Avg COT (°C)", min_value=700.0, max_value=1050.0, value=850.0, step=5.0)
+            mode = st.selectbox("Mode", ['normal', 'ramp_up', 'ramp_down', 'maintenance', 'startup'])
+            num_active_furnaces = st.number_input("Num Active Furnaces", min_value=4, max_value=10, value=6, step=1)
+        
+        with col2:
+            ambient_temp_c = st.number_input("Ambient Temp (°C)", min_value=-10.0, max_value=45.0, value=20.0, step=1.0)
+            feed_mix_index = st.number_input("Feed Mix Index", min_value=0.3, max_value=1.0, value=0.7, step=0.05)
+            steam_shp_mlb = st.number_input("Steam SHP (MLB)", value=100.0, step=5.0)
+            steam_hp_mlb = st.number_input("Steam HP (MLB)", value=70.0, step=5.0)
+            steam_ip_mlb = st.number_input("Steam IP (MLB)", value=35.0, step=5.0)
+        
+        st.markdown("### Fuel & Power")
+        col3, col4 = st.columns(2)
+        with col3:
+            total_fuel_mmbtu = st.number_input("Total Fuel (MMBtu)", value=210.0, step=10.0)
+            power_purchased_mwh = st.number_input("Power Purchased (MWh)", value=150.0, step=10.0)
+        with col4:
+            power_onsite_mwh = st.number_input("Power Onsite (MWh)", value=70.0, step=10.0)
+            heat_rate_btu_per_kwh = st.number_input("Heat Rate (BTU/kWh)", value=8500.0, step=100.0)
+            power_onsite_tech = st.selectbox("Power Tech", ['gas_turbine', 'steam_turbine', 'combined_cycle', 'none'])
+        
+        submit = st.form_submit_button("Predict SEC", type="primary")
     
-    with col1:
-        plant_load_pct = st.number_input("Plant Load (%)", min_value=60.0, max_value=105.0, value=85.0, step=1.0)
-        ethylene_rate_tph = st.number_input("Ethylene Rate (tph)", min_value=50.0, max_value=350.0, value=150.0, step=5.0)
-        avg_cot_c = st.number_input("Avg COT (°C)", min_value=700.0, max_value=1050.0, value=850.0, step=5.0)
-        ambient_temp_c = st.number_input("Ambient Temp (°C)", min_value=-10.0, max_value=45.0, value=20.0, step=1.0)
-        mode = st.selectbox("Mode", ['normal', 'ramp_up', 'ramp_down', 'maintenance', 'startup'])
-        num_active_furnaces = st.number_input("Num Active Furnaces", min_value=4, max_value=10, value=6, step=1)
-        feed_mix_index = st.number_input("Feed Mix Index", min_value=0.3, max_value=1.0, value=0.7, step=0.05)
-    
-    with col2:
-        steam_shp_mlb = st.number_input("Steam SHP (MLB)", value=100.0, step=5.0)
-        steam_hp_mlb = st.number_input("Steam HP (MLB)", value=70.0, step=5.0)
-        steam_ip_mlb = st.number_input("Steam IP (MLB)", value=35.0, step=5.0)
-        steam_lp_mlb = st.number_input("Steam LP (MLB)", value=20.0, step=5.0)
-        steam_generation_efficiency = st.number_input("Steam Gen Efficiency", min_value=0.75, max_value=0.92, value=0.85, step=0.01)
-        steam_renewables_share = st.number_input("Steam Renewables Share", min_value=0.0, max_value=0.15, value=0.05, step=0.01)
-    
-    st.markdown("### Fuel Composition (MMBtu)")
-    col3, col4, col5 = st.columns(3)
-    with col3:
-        fuel_h2_mmbtu = st.number_input("Fuel H2 (MMBtu)", value=30.0, step=5.0)
-        fuel_ch4_mmbtu = st.number_input("Fuel CH4 (MMBtu)", value=80.0, step=5.0)
-    with col4:
-        fuel_c2h6_mmbtu = st.number_input("Fuel C2H6 (MMBtu)", value=50.0, step=5.0)
-        fuel_gasoil_mmbtu = st.number_input("Fuel Gasoil (MMBtu)", value=30.0, step=5.0)
-    with col5:
-        fuel_solid_mmbtu = st.number_input("Fuel Solid (MMBtu)", value=20.0, step=5.0)
-    
-    st.markdown("### Power")
-    col6, col7 = st.columns(2)
-    with col6:
-        power_purchased_mwh = st.number_input("Power Purchased (MWh)", value=150.0, step=10.0)
-        power_onsite_mwh = st.number_input("Power Onsite (MWh)", value=70.0, step=10.0)
-    with col7:
-        power_onsite_tech = st.selectbox("Power Onsite Tech", ['gas_turbine', 'steam_turbine', 'combined_cycle', 'none'])
-        heat_rate_btu_per_kwh = st.number_input("Heat Rate (BTU/kWh)", value=8500.0, step=100.0)
-    
-    if st.button("Predict SEC"):
+    if submit:
         input_data = {
             'plant_load_pct': plant_load_pct,
             'ethylene_rate_tph': ethylene_rate_tph,
@@ -388,14 +398,14 @@ with tab3:
             'steam_shp_mlb': steam_shp_mlb,
             'steam_hp_mlb': steam_hp_mlb,
             'steam_ip_mlb': steam_ip_mlb,
-            'steam_lp_mlb': steam_lp_mlb,
-            'steam_generation_efficiency': steam_generation_efficiency,
-            'steam_renewables_share': steam_renewables_share,
-            'fuel_h2_mmbtu': fuel_h2_mmbtu,
-            'fuel_ch4_mmbtu': fuel_ch4_mmbtu,
-            'fuel_c2h6_mmbtu': fuel_c2h6_mmbtu,
-            'fuel_gasoil_mmbtu': fuel_gasoil_mmbtu,
-            'fuel_solid_mmbtu': fuel_solid_mmbtu,
+            'steam_lp_mlb': steam_ip_mlb * 0.6,
+            'steam_generation_efficiency': 0.85,
+            'steam_renewables_share': 0.05,
+            'fuel_h2_mmbtu': total_fuel_mmbtu * 0.15,
+            'fuel_ch4_mmbtu': total_fuel_mmbtu * 0.35,
+            'fuel_c2h6_mmbtu': total_fuel_mmbtu * 0.25,
+            'fuel_gasoil_mmbtu': total_fuel_mmbtu * 0.15,
+            'fuel_solid_mmbtu': total_fuel_mmbtu * 0.10,
             'power_purchased_mwh': power_purchased_mwh,
             'power_onsite_mwh': power_onsite_mwh,
             'heat_rate_btu_per_kwh': heat_rate_btu_per_kwh,
@@ -417,9 +427,8 @@ with tab3:
         
         st.success(f"**Predicted SEC: {prediction:.4f} MMBtu/ton ethylene**")
         
-        total_fuel = fuel_h2_mmbtu + fuel_ch4_mmbtu + fuel_c2h6_mmbtu + fuel_gasoil_mmbtu + fuel_solid_mmbtu
-        total_power = ((power_purchased_mwh + power_onsite_mwh) * (heat_rate_btu_per_kwh / 1e6 / 1000))
-        total_energy = total_fuel + total_power
+        total_power_mmbtu = (power_purchased_mwh + power_onsite_mwh) * (heat_rate_btu_per_kwh / 1e6 / 1000)
+        total_energy = total_fuel_mmbtu + total_power_mmbtu
         manual_sec = total_energy / ethylene_rate_tph
         
-        st.info(f"Manual calculation: {manual_sec:.4f} MMBtu/ton (for reference)")
+        st.info(f"Manual calculation: {manual_sec:.4f} MMBtu/ton")
