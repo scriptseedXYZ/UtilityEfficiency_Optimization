@@ -162,8 +162,8 @@ def train_model(df):
     
     return model, X_train, X_test, y_train, y_test, train_r2, test_r2, test_mae, df_encoded
 
-st.set_page_config(page_title="Olefin Plant Energy Benchmarking", layout="wide")
-st.title("Olefin Plant Utility Efficiency Optimization")
+st.set_page_config(page_title="Petrochem Plant Utility Effeciency Optimization", layout="wide")
+st.title("Petrochem Plant Utility Effeciency Optimization")
 
 st.sidebar.header("Data Generation")
 if st.sidebar.button("Generate New Data"):
